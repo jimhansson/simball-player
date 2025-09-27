@@ -19,6 +19,16 @@
   (let ((body (jonathan:to-json data)))
     (list status '(("Content-Type" . "application/json")) (list body))))
 
+
+;; Färgkonstanter för lagkläder
+
+(defconstant +primary-jersey-blue+   "1A237E") ; Mörkblå
+(defconstant +primary-pants-white+   "FFFFFF") ; Vit
+(defconstant +primary-socks-blue+    "1A237E") ; Mörkblå
+(defconstant +secondary-jersey-red+  "C62828") ; Röd
+(defconstant +secondary-pants-black+ "000000") ; Svart
+(defconstant +secondary-socks-red+   "C62828") ; Röd
+
 (define-routes app
   ((GET "/:strategy/Player" (strategy)
     (if (valid-strategy-p strategy)
@@ -28,9 +38,13 @@
    (GET "/:strategy/Player/setup" (strategy)
     (if (valid-strategy-p strategy)
         (json-response
-         '((name . "SimballBot")
-           (primaryColor . ((jearsey . "blue") (pants . "white") (socks . "blue")))
-           (secondaryColor . ((jearsey . "red") (pants . "black") (socks . "red")))))
+         `((name . "SimballBot")
+           (primaryColor . ((jearsey . ,+primary-jersey-blue+)
+                            (pants . ,+primary-pants-white+)
+                            (socks . ,+primary-socks-blue+)))
+           (secondaryColor . ((jearsey . ,+secondary-jersey-red+)
+                              (pants . ,+secondary-pants-black+)
+                              (socks . ,+secondary-socks-red+)))))
         (json-response '("error" . "Invalid strategy") 404)))
 
    (POST "/:strategy/Player/update" (strategy)
