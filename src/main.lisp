@@ -1,15 +1,13 @@
 ;;;; main.lisp
-;;;; Simball Player API-tjänst med Clack och routing
+;;;; Simball Player API-tjänst med Clack
 
 (defpackage :simball-player
-  (:use :cl :clack :clack.middleware :lack.request :lack.response)
-  (:import-from :clack.middleware.router :define-routes))
+  (:use :cl :clack)
+  (:import-from :lack.request :request-method :request-path-info :request-headers)
+  (:import-from :lack.response :response)
+  (:import-from :cl-ppcre :scan :register-groups-bind :split))
+
 (in-package :simball-player)
-
-;; Ladda beroenden
-(eval-when (:compile-toplevel :load-toplevel :execute)
-  (ql:quickload '(clack clack-router jonathan)))
-
 
 ;; Färgkonstanter för lagkläder
 
@@ -61,50 +59,69 @@
           (append '(("Content-Type" . "application/json")) *cors-headers*)
           (list body))))
 
-(define-routes app
+;; Enkel dispatch-funktion för Clack
+(defun app (env)
+  (let* ((req (lack.request:create-request env))
+         (method (string-upcase (request-method req)))
+         (path (request-path-info req)))
+    (cond
+      ;; OPTIONS för CORS preflight
+      ((and (string= method "OPTIONS")
+            (or (ppcre:scan "/[a-zA-Z0-9_-]+/Player/update" path)
+                (ppcre:scan "/[a-zA-Z0-9_-]+/Player" path)
+                (ppcre:scan "/[a-zA-Z0-9_-]+/Player/setup" path)))
+       (list 200 *cors-headers* '("")))
 
-  ;; OPTIONS för CORS preflight
-  ((OPTIONS "/:strategy/Player/update" (strategy)
-    (list 200 *cors-headers* '("")))
-   (OPTIONS "/:strategy/Player" (strategy)
-    (list 200 *cors-headers* '("")))
-   (OPTIONS "/:strategy/Player/setup" (strategy)
-    (list 200 *cors-headers* '("")))
-   
-   (GET "/:strategy/Player" (strategy) 
-    (if (valid-strategy-p strategy)
-        (json-response (format nil "Simball Player API - ~A" strategy))
-        (json-response '("error" . "Invalid strategy") 404)))
+      ;; GET /:strategy/Player
+      ((and (string= method "GET")
+            (ppcre:register-groups-bind (nil strategy) ("^/([^/]+)/Player$" path)
+              (declare (ignore nil))
+              strategy))
+       (let ((strategy (second (ppcre:split "/" path))))
+         (if (valid-strategy-p strategy)
+             (json-response (format nil "Simball Player API - ~A" strategy))
+             (json-response '("error" . "Invalid strategy") 404))))
 
-   (GET "/:strategy/Player/setup" (strategy)
-    (if (valid-strategy-p strategy)
-        (json-response
-         `((name . "SimballBot")
-           (primaryColor . ((jearsey . ,+primary-jersey-blue+)
-                            (pants . ,+primary-pants-white+)
-                            (socks . ,+primary-socks-blue+)))
-           (secondaryColor . ((jearsey . ,+secondary-jersey-red+)
-                              (pants . ,+secondary-pants-black+)
-                              (socks . ,+secondary-socks-red+)))))
-        (json-response '("error" . "Invalid strategy") 404)))
+      ;; GET /:strategy/Player/setup
+      ((and (string= method "GET")
+            (ppcre:register-groups-bind (nil strategy) ("^/([^/]+)/Player/setup$" path)
+              (declare (ignore nil))
+              strategy))
+       (let ((strategy (second (ppcre:split "/" path))))
+         (if (valid-strategy-p strategy)
+             (json-response
+              `((name . "SimballBot")
+                (primaryColor . ((jearsey . ,+primary-jersey-blue+)
+                                 (pants . ,+primary-pants-white+)
+                                 (socks . ,+primary-socks-blue+)))
+                (secondaryColor . ((jearsey . ,+secondary-jersey-red+)
+                                   (pants . ,+secondary-pants-black+)
+                                   (socks . ,+secondary-socks-red+)))))
+             (json-response '("error" . "Invalid strategy") 404))))
 
-   (POST "/:strategy/Player/update" (strategy)
-    (if (valid-strategy-p strategy)
-        (let* ((req (lack.request:create-request *request*))
-               (raw-body (or (gethash "raw-body" req) "{}"))
-               (body (jonathan:parse raw-body))
-               (correlation-id (cdr (assoc "correlationId" body :test #'string=)))
-               (strat-key (intern (string-upcase strategy) :keyword))
-               (instructions (handle-update strat-key correlation-id body)))
-          ;; Spara undan request och response i FIFO per correlationId
-          (when correlation-id
-            (save-history correlation-id body instructions))
-          (json-response instructions))
-        (json-response '("error" . "Invalid strategy") 404)))))
+      ;; POST /:strategy/Player/update
+      ((and (string= method "POST")
+            (ppcre:register-groups-bind (nil strategy) ("^/([^/]+)/Player/update$" path)
+              (declare (ignore nil))
+              strategy))
+       (let* ((strategy (second (ppcre:split "/" path))))
+         (if (valid-strategy-p strategy)
+             (let* ((raw-body (or (gethash "raw-body" req) "{}"))
+                    (body (jonathan:parse raw-body))
+                    (correlation-id (cdr (assoc "correlationId" body :test #'string=)))
+                    (strat-key (intern (string-upcase strategy) :keyword))
+                    (instructions (handle-update strat-key correlation-id body)))
+               (when correlation-id
+                 (save-history correlation-id body instructions))
+               (json-response instructions))
+             (json-response '("error" . "Invalid strategy") 404))))
+
+      ;; Fallback: 404
+      (t (json-response '("error" . "Not found") 404)))))
 
 ;; För att starta servern: (simball-player:start-server)
 (defun start-server (&key (port 5000))
-  (clack:clackup app :port port))
+  (clack:clackup #'app :port port))
 
 
 ;; --- Strategi-dispatch med CLOS ---
