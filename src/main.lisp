@@ -2,29 +2,28 @@
 ;;;; Simball Player API-tjänst med Clack
 
 (defpackage :simball-player
-  (:use :cl :clack)
-  (:import-from :lack.request :request-method :request-path-info :request-headers)
-  (:import-from :lack.response :response)
-  (:import-from :cl-ppcre :scan :register-groups-bind :split))
+  (:use :cl :clack :lack/request :lack.response :cl-ppcre)
+  (:export :start-server))
 
 (in-package :simball-player)
 
 ;; Färgkonstanter för lagkläder
 
-(defconstant +primary-jersey-blue+   "1A237E") ; Mörkblå
-(defconstant +primary-pants-white+   "FFFFFF") ; Vit
-(defconstant +primary-socks-blue+    "1A237E") ; Mörkblå
-(defconstant +secondary-jersey-red+  "C62828") ; Röd
-(defconstant +secondary-pants-black+ "000000") ; Svart
-(defconstant +secondary-socks-red+   "C62828") ; Röd
+(defparameter +primary-jersey-blue+   "1A237E") ; Mörkblå
+(defparameter +primary-pants-white+   "FFFFFF") ; Vit
+(defparameter +primary-socks-blue+    "1A237E") ; Mörkblå
+(defparameter +secondary-jersey-red+  "C62828") ; Röd
+(defparameter +secondary-pants-black+ "000000") ; Svart
+(defparameter +secondary-socks-red+   "C62828") ; Röd
+
 
 (defparameter *strategies* '("default" "strategy1"))
 
 ;; Lägg till CORS-header i alla svar
 (defparameter *cors-headers*
-  '(("Access-Control-Allow-Origin" . "*")
-    ("Access-Control-Allow-Headers" . "Content-Type, Authorization")
-    ("Access-Control-Allow-Methods" . "GET, POST, OPTIONS")))
+  '("Access-Control-Allow-Origin" "*" 
+    "Access-Control-Allow-Headers" "Content-Type, Authorization" 
+    "Access-Control-Allow-Methods" "GET, POST, OPTIONS"))
 
 
 (defparameter *history-size* 10)
@@ -53,35 +52,35 @@
 (defun valid-strategy-p (strategy)
   (member strategy *strategies* :test #'string=))
 
+
 (defun json-response (data &optional (status 200))
   (let ((body (jonathan:to-json data)))
     (list status
-          (append '(("Content-Type" . "application/json")) *cors-headers*)
+          (append *cors-headers* '(:content-type  "application/json"))
           (list body))))
 
 ;; Enkel dispatch-funktion för Clack
 (defun app (env)
-  (let* ((req (lack.request:create-request env))
+  (let* ((req (lack/request:make-request env))
          (method (string-upcase (request-method req)))
-         (path (request-path-info req)))
+         (path (request-path-info req))
+         (strategy-match (multiple-value-list (ppcre:scan-to-strings "^/([^/]+)/" path)))
+         (strategy (and (first strategy-match) (aref (second strategy-match) 0))))
+         (progn
+         (format t "Request before cond: ~A ~A ~A ~%" method path strategy)
     (cond
       ;; OPTIONS för CORS preflight
-      ((and (string= method "OPTIONS")
-            (or (ppcre:scan "/[a-zA-Z0-9_-]+/Player/update" path)
-                (ppcre:scan "/[a-zA-Z0-9_-]+/Player" path)
-                (ppcre:scan "/[a-zA-Z0-9_-]+/Player/setup" path)))
+      ((string= method "OPTIONS")
        (list 200 *cors-headers* '("")))
 
       ;; GET /:strategy/Player
       ((and (string= method "GET")
-            (ppcre:register-groups-bind (nil strategy) ("^/([^/]+)/Player$" path)
-              (declare (ignore nil))
-              strategy))
-       (let ((strategy (second (ppcre:split "/" path))))
-         (if (valid-strategy-p strategy)
-             (json-response (format nil "Simball Player API - ~A" strategy))
-             (json-response '("error" . "Invalid strategy") 404))))
-
+            (valid-strategy-p strategy))
+       (progn
+        (format t "Strategy: ~A~%" strategy)
+        (let ((strategy (second (ppcre:split "/" path))))
+            (json-response (format nil "Simball Player API - ~A" strategy)))))
+    
       ;; GET /:strategy/Player/setup
       ((and (string= method "GET")
             (ppcre:register-groups-bind (nil strategy) ("^/([^/]+)/Player/setup$" path)
@@ -117,12 +116,11 @@
              (json-response '("error" . "Invalid strategy") 404))))
 
       ;; Fallback: 404
-      (t (json-response '("error" . "Not found") 404)))))
+      (t (json-response '(:error "Not found") 404))))))
 
 ;; För att starta servern: (simball-player:start-server)
 (defun start-server (&key (port 5000))
   (clack:clackup #'app :port port))
-
 
 ;; --- Strategi-dispatch med CLOS ---
 (defgeneric handle-update (strategy correlation-id body)
@@ -132,12 +130,12 @@
   '((p1Instructions . ((moveToX . 0) (moveToY . 0) (moveVelocity . 0)))
     (p2Instructions . ((moveToX . 0) (moveToY . 0) (moveVelocity . 0)))
     (p3Instructions . ((moveToX . 0) (moveToY . 0) (moveVelocity . 0)))
-    (p4Instructions . ((moveToX . 0) (moveToY . 0) (moveVelocity . 0))))
+    (p4Instructions . ((moveToX . 0) (moveToY . 0) (moveVelocity . 0)))))
 
 (defmethod handle-update ((strategy (eql :strategy1)) correlation-id body)
   ;; Exempel: returnera annan dummy-data
   '((p1Instructions . ((moveToX . 1) (moveToY . 1) (moveVelocity . 1)))
     (p2Instructions . ((moveToX . 2) (moveToY . 2) (moveVelocity . 2)))
     (p3Instructions . ((moveToX . 3) (moveToY . 3) (moveVelocity . 3)))
-    (p4Instructions . ((moveToX . 4) (moveToY . 4) (moveVelocity . 4))))
+    (p4Instructions . ((moveToX . 4) (moveToY . 4) (moveVelocity . 4)))))
 
